@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Speak an agent reply through the local Speaches TTS (Kokoro on GPU).
+
+Usage:
+  agent-speak < text            # speak plain text from stdin
+  agent-speak --claude-hook     # stdin is a Claude Code Stop hook JSON
+  agent-speak --stop            # stop current playback
+Mute with `touch ~/.cache/agent-speak.off` (rm to unmute) or AGENT_SPEAK=0.
+When the agent runs inside an SSH session, audio plays on the SSH client
+(the Mac) via `ssh $AGENT_SPEAK_SSH afplay` instead of local speakers.
+"""
+import json, os, re, signal, subprocess, sys, tempfile, urllib.request
+
+URL = os.environ.get("AGENT_SPEAK_URL", "http://127.0.0.1:8000/v1/audio/speech")
+MODEL = os.environ.get("AGENT_SPEAK_MODEL", "speaches-ai/Kokoro-82M-v1.0-ONNX")
+VOICE = os.environ.get("AGENT_SPEAK_VOICE", "ef_dora")
+MAX_CHARS = int(os.environ.get("AGENT_SPEAK_MAX", "600"))
+STATE = os.path.expanduser("~/.cache/agent-speak")
+PIDFILE, OFF = STATE + ".pid", STATE + ".off"
+# shortcut: any SSH session plays on this one host; make it per-client if you SSH in from more machines.
+REMOTE = os.environ.get("AGENT_SPEAK_SSH", "mac") if os.environ.get("SSH_CONNECTION") else ""
+REMOTE_WAV = "/tmp/agent-speak.wav"
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", REMOTE]
+
+
+def clean(text: str) -> str:
+    text = re.sub(r"```.*?(```|$)", " ", text, flags=re.S)  # fenced code
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)  # links/images -> label
+    text = re.sub(r"^\s*\|.*\|\s*$", " ", text, flags=re.M)  # tables
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"[*_#>|~]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > MAX_CHARS:  # cut at last sentence end inside the limit
+        cut = text[:MAX_CHARS]
+        end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+        text = cut[: end + 1] if end > MAX_CHARS // 3 else cut
+    return text
+
+
+def claude_last_message(hook: dict) -> str:
+    if hook.get("last_assistant_message"):
+        return hook["last_assistant_message"]
+    last = ""  # fallback: newest assistant text block in the transcript
+    with open(hook.get("transcript_path", ""), encoding="utf-8") as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            msg = e.get("message") or {}
+            if e.get("type") == "assistant" and isinstance(msg.get("content"), list):
+                texts = [b.get("text", "") for b in msg["content"] if b.get("type") == "text"]
+                if any(t.strip() for t in texts):
+                    last = "\n".join(texts)
+    return last
+
+
+def stop_previous() -> None:
+    try:
+        os.killpg(int(open(PIDFILE).read()), signal.SIGTERM)
+    except (OSError, ValueError):
+        return  # nothing was playing
+    if REMOTE:  # killing the local ssh client does not stop afplay on the Mac
+        subprocess.run(SSH + [f"pkill -f 'afplay {REMOTE_WAV}'"], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+
+
+def main() -> None:
+    if "--stop" in sys.argv:
+        return stop_previous()
+    if os.environ.get("AGENT_SPEAK") == "0" or os.path.exists(OFF):
+        return
+    raw = sys.stdin.read()
+    text = clean(claude_last_message(json.loads(raw)) if "--claude-hook" in sys.argv else raw)
+    if not text:
+        return
+    # Detach so the agent never waits on synthesis/playback.
+    if os.fork():
+        return
+    os.setsid()
+    stop_previous()
+    open(PIDFILE, "w").write(str(os.getpid()))
+    body = json.dumps({"model": MODEL, "voice": VOICE, "input": text, "response_format": "wav"}).encode()
+    req = urllib.request.Request(URL, body, {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r, tempfile.NamedTemporaryFile(suffix=".wav") as wav:
+        wav.write(r.read())
+        wav.flush()
+        if REMOTE:
+            with open(wav.name, "rb") as audio:
+                subprocess.run(SSH + [f"cat > {REMOTE_WAV} && exec afplay {REMOTE_WAV}"], stdin=audio,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(["pw-play", wav.name], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:  # never break the agent because TTS failed
+        print(f"agent-speak: {e}", file=sys.stderr)
+    sys.exit(0)
