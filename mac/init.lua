@@ -45,3 +45,10 @@ local function stopRecording()
 end
 
 hs.hotkey.bind({ "alt" }, "space", startRecording, stopRecording)
+
+-- ⌥Esc: stop the reply being read aloud (and drop queued ones), wherever it is playing.
+hs.hotkey.bind({ "alt" }, "escape", function()
+  hs.task.new("/usr/bin/ssh", nil, { "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", HOST,
+    "$HOME/.local/bin/agent-speak --stop" }):start()
+  hs.task.new("/usr/bin/pkill", nil, { "-f", "afplay /tmp/agent-speak.wav" }):start() -- instant local cut
+end)

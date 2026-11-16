@@ -30,6 +30,5 @@ export default function (pi: ExtensionAPI) {
 		const text = lastAssistantText(ctx.sessionManager.getBranch());
 		if (text) run([], text);
 	});
-	pi.on("agent_start", async () => run(["--stop"]));
 	pi.registerCommand("speak-stop", { description: "Stop TTS playback", handler: async () => run(["--stop"]) });
 }

@@ -12,7 +12,7 @@ Both directions go through one server, [Speaches](https://github.com/speaches-ai
 ## Layout
 
 - `speaches/run.sh`: (re)creates the container and loads both models.
-- `bin/agent-speak`: TTS for agent replies. Strips code, caps at ~600 chars, plays locally or on the Mac.
+- `bin/agent-speak`: TTS for agent replies. Reads the whole reply minus code; new replies queue behind the current one. Plays locally or on the Mac.
 - `pi/agent-speak.ts`: pi extension that speaks the final reply. `pi/stt.json` configures pi-voice-stt (Ctrl+R records on the Linux mic).
 - `voxtype/config.toml`: voxtype in remote mode against Speaches, Spanish and English.
 - `mac/init.lua`: Hammerspoon hold-to-talk for the Mac.
@@ -37,7 +37,7 @@ Then give Hammerspoon **Accessibility** and **Microphone** permissions. To updat
 
 ## Everyday use
 
-- Mute TTS: `touch ~/.cache/agent-speak.off` (rm to unmute). Stop playback: `agent-speak --stop`, or send a new message.
+- Mute TTS: `touch ~/.cache/agent-speak.off` (rm to unmute). Stop playback (and drop queued replies): **⌥Esc** on the Mac, `/speak-stop` in pi, or `agent-speak --stop`. Nothing else interrupts it.
 - Another voice: set `AGENT_SPEAK_VOICE` (e.g. `em_alex`).
 - If you SSH in from a machine other than the Mac, set `AGENT_SPEAK_SSH` to its ssh alias.
 - Inside tmux, `SSH_CONNECTION` is whatever it was when the tmux server started, so audio can go to the wrong machine.

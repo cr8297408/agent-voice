@@ -23,12 +23,18 @@ import json, sys
 path = sys.argv[1]
 settings = json.load(open(path))
 hooks = settings.setdefault("hooks", {})
-for event, cmd in [("Stop", "$HOME/.local/bin/agent-speak --claude-hook"),
-                   ("UserPromptSubmit", "$HOME/.local/bin/agent-speak --stop")]:
-    entries = hooks.setdefault(event, [])
-    if not any(h.get("command") == cmd for e in entries for h in e.get("hooks", [])):
-        entries.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
-        print(f"added Claude {event} hook")
+cmd = "$HOME/.local/bin/agent-speak --claude-hook"
+entries = hooks.setdefault("Stop", [])
+if not any(h.get("command") == cmd for e in entries for h in e.get("hooks", [])):
+    entries.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+    print("added Claude Stop hook")
+# Older installs stopped playback on every new prompt; replies now only stop on request.
+old = "$HOME/.local/bin/agent-speak --stop"
+prompt = hooks.get("UserPromptSubmit", [])
+kept = [e for e in prompt if not any(h.get("command") == old for h in e.get("hooks", []))]
+if len(kept) != len(prompt):
+    hooks["UserPromptSubmit"] = kept
+    print("removed Claude UserPromptSubmit stop hook")
 with open(path, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
